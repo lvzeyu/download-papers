@@ -25,3 +25,14 @@ passwords, downloaded papers, and logs. Python dependencies are declared in
 `pyproject.toml`. CloakBrowser downloads its platform-specific browser separately.
 
 See `LICENSE` for the upstream copyright and redistribution terms.
+
+Local change (2026-10-31): `instsci/publisher_profiles.py` — `SPRINGER_PROFILE` now sets
+`supplementary_url_markers` to include `moesm` and `/esm/`, so Nature supplementary
+files (`.../esm/.../MOESM1_ESM.pdf`) are no longer chosen as the article PDF.
+
+Local change (2026-10-31): `instsci/publisher_batch.py` — `_url_matches_record` also accepts
+`nature.com/articles/<doi-suffix>[.pdf]` (exact suffix match). Nature article URLs omit the
+`10.1038/` prefix, so the direct PDF route was always rejected and the engine fell back to a
+button click that could pick the Supplementary Information PDF.
+
+- 2026-10-31: `publisher_batch.py` `_capture_pdf` (success path): when the PDF is captured from Chrome's PDF viewer (`chrome-extension://…` URL), `verified_match` is decided by finding the DOI suffix in the first two pages' text (`_pdf_text_has_doi_suffix`, needs PyMuPDF) instead of the opaque URL. Needed for science.org (Science Advances).

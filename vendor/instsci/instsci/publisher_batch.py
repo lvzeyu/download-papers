@@ -783,6 +783,9 @@ class PublisherBatchDownloader:
         result.size_bytes = len(pdf_bytes)
         result.text_length = 0
         result.verified_match = self._url_matches_record(pdf_url, record.doi)
+        if not result.verified_match and pdf_url.startswith("chrome-extension://"):
+            # PDF came from the browser's PDF viewer, so the URL is opaque; check the DOI suffix in the text.
+            result.verified_match = self._pdf_text_has_doi_suffix(pdf_bytes, record.doi)
         (run_dir / f"{safe_name(record.doi)}.json").write_text(
             json.dumps(asdict(result), ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -790,6 +793,18 @@ class PublisherBatchDownloader:
         # A captured PDF is the proof that this lane's session works.
         self.session_state["login_done"] = True
         return result
+
+    @staticmethod
+    def _pdf_text_has_doi_suffix(pdf_bytes: bytes, doi: str) -> bool:
+        try:
+            import pymupdf
+
+            suffix = doi.lower().split("/", 1)[-1]
+            with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+                text = "".join(doc[i].get_text() for i in range(min(2, len(doc))))
+            return suffix in text.lower() or doi.lower() in text.lower()
+        except Exception:
+            return False
 
     @staticmethod
     def _browser_gone(exc: BaseException) -> bool:
@@ -3111,7 +3126,13 @@ class PublisherBatchDownloader:
 
         lower_url = unquote(str(url or "")).lower()
         doi_lower = doi.lower()
-        return doi_lower in lower_url
+        if doi_lower in lower_url:
+            return True
+        # nature.com article URLs carry only the DOI suffix: /articles/s41562-026-02516-2.pdf
+        suffix = doi_lower.split("/", 1)[-1]
+        return "nature.com/articles/" in lower_url and (
+            lower_url.split("nature.com/articles/", 1)[1].split("?", 1)[0].removesuffix(".pdf") == suffix
+        )
 
     def _wait_for_challenge(self, page: Any, result: DownloadResult, *, deadline: float | None = None) -> bool:
         wait_interval_sec = 5

@@ -474,6 +474,15 @@ SPRINGER_PROFILE = PublisherProfile(
         ),
     ),
     pdf_url_markers=("/content/pdf/", ".pdf", "pdf"),
+    # Nature/Springer supplementary files live at static-content.springer.com/esm/.../MOESM*_ESM.pdf
+    supplementary_url_markers=(
+        "suppl_file",
+        "suppdata",
+        "supporting-information",
+        "supplementary",
+        "moesm",
+        "/esm/",
+    ),
 )
 
 WORLD_SCIENTIFIC_PROFILE = PublisherProfile(

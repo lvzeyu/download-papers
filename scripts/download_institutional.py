@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -139,6 +140,21 @@ def enable_dedicated_profile_password_manager(profile_dir: Path | None = None) -
     return preferences_path
 
 
+IMPORTED_COOKIES = Path.home() / ".local/share/download-papers/imported-cookies.json"
+
+
+def _inject_imported_cookies(context: Any) -> None:
+    """Load cookies written by tools/export_cookies.py, if the user created that file."""
+    if not IMPORTED_COOKIES.is_file():
+        return
+    try:
+        cookies = json.loads(IMPORTED_COOKIES.read_text(encoding="utf-8"))
+        context.add_cookies(cookies)
+        print(f"Injected {len(cookies)} imported cookie(s) from {IMPORTED_COOKIES}.", file=sys.stderr)
+    except (OSError, ValueError) as exc:
+        print(f"Imported cookies were not applied: {type(exc).__name__}", file=sys.stderr)
+
+
 def _make_downloader(base: type, headless: bool, visible_needed: set[str]):
     class InstitutionalDownloader(base):
         def __init__(self, *args, password_save_wait: int = 0, **kwargs):
@@ -147,6 +163,36 @@ def _make_downloader(base: type, headless: bool, visible_needed: set[str]):
             self._password_save_wait_done = False
             kwargs["post_login_hold_sec"] = self._password_save_wait if not headless else 0
             super().__init__(*args, **kwargs)
+
+        def _run_once(self, records, *args, **kwargs):
+            self._progress = {"total": len(records), "done": 0, "ok": 0, "fail": 0, "t0": time.time()}
+            return super()._run_once(records, *args, **kwargs)
+
+        def fetch_one(self, context, record, run_dir):
+            result = super().fetch_one(context, record, run_dir)
+            self._report_progress(result)
+            return result
+
+        def _report_progress(self, result) -> None:
+            """One stderr line per DOI: bar, counts, average pace and ETA."""
+            p = getattr(self, "_progress", None)
+            if not p:
+                return
+            p["done"] += 1
+            ok = result.status == "success" and bool(result.verified_match)
+            p["ok" if ok else "fail"] += 1
+            elapsed = time.time() - p["t0"]
+            per_item = elapsed / p["done"]
+            eta = int(per_item * (p["total"] - p["done"]))
+            width = 24
+            filled = int(width * p["done"] / p["total"])
+            bar = "█" * filled + "░" * (width - filled)
+            size = f"{result.size_bytes / 1e6:.1f}MB" if result.size_bytes else "-"
+            reason = "" if ok else f" ({result.reason or result.state})"
+            print(f"[{p['done']:>{len(str(p['total']))}}/{p['total']}] {bar} {100 * p['done'] / p['total']:5.1f}% "
+                  f"{'OK  ' if ok else 'FAIL'} {result.doi} {size}{reason} | "
+                  f"ok={p['ok']} fail={p['fail']} | {per_item:.0f}s/paper ETA {eta // 3600}h{eta % 3600 // 60:02d}m",
+                  file=sys.stderr, flush=True)
 
         def _launch_context(self, profile_dir=None, proxy=None):
             from instsci.cloakbrowser_compat import prepare_cloakbrowser_runtime
@@ -168,12 +214,14 @@ def _make_downloader(base: type, headless: bool, visible_needed: set[str]):
                 *original_filters, "--password-store=basic", "--use-mock-keychain",
             ]))
             try:
-                return launch_persistent_context(
+                context = launch_persistent_context(
                     user_data_dir=str(profile_path), headless=headless, humanize=True,
                     accept_downloads=True, downloads_path=str(downloads_path),
                     args=["--disable-features=CrossOriginOpenerPolicy", "--restore-last-session"],
                     **kwargs,
                 )
+                _inject_imported_cookies(context)
+                return context
             finally:
                 browser_module.IGNORE_DEFAULT_ARGS = original_filters
 
